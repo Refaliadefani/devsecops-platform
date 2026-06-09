@@ -1,0 +1,479 @@
+// ==============================================================================
+// Jenkinsfile - DevSecOps Pipeline Template
+// ==============================================================================
+// Template pipeline untuk deployment aplikasi ke Kubernetes.
+// Copy file ini ke repository aplikasi dan sesuaikan variables di bawah.
+//
+// Requirement:
+//   - Jenkins 2.x+ dengan Pipeline plugin
+//   - Docker Pipeline plugin
+//   - Credentials plugin (untuk Harbor, ArgoCD)
+//   - Slack Notification plugin (opsional)
+//
+// Credentials yang harus di-set di Jenkins:
+//   - harbor-credentials     (Username/Password - Harbor robot account)
+//   - argocd-credentials     (Username/Password - ArgoCD CI account)
+//   - slack-webhook          (Secret text - Slack webhook URL)
+// ==============================================================================
+
+pipeline {
+    agent any
+
+    // ==========================================================================
+    // Environment Variables
+    // ==========================================================================
+    environment {
+        // Application
+        APP_NAME            = "${env.JOB_NAME.split('/')[0]}"
+        IMAGE_TAG           = "${env.GIT_COMMIT?.take(7)}-${env.BUILD_NUMBER}"
+        
+        // Container Registry (Harbor)
+        HARBOR_URL          = credentials('harbor-url')
+        HARBOR_PROJECT      = "apps"
+        IMAGE_NAME          = "${HARBOR_URL}/${HARBOR_PROJECT}/${APP_NAME}"
+        
+        // Kubernetes
+        KUBE_NAMESPACE_DEV  = "${APP_NAME}-dev"
+        KUBE_NAMESPACE_PROD = "${APP_NAME}-prod"
+        
+        // Helm
+        HELM_CHART_PATH     = "./helmchart"
+        
+        // Security Scanning
+        TRIVY_SEVERITY      = "CRITICAL,HIGH"
+        SEMGREP_RULES       = "auto"
+        
+        // ArgoCD
+        ARGOCD_SERVER       = credentials('argocd-url')
+        
+        // Notification
+        SLACK_CHANNEL       = "#deployments"
+    }
+
+    // ==========================================================================
+    // Pipeline Options
+    // ==========================================================================
+    options {
+        timeout(time: 30, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timestamps()
+    }
+
+    // ==========================================================================
+    // Pipeline Stages
+    // ==========================================================================
+    stages {
+
+        // ======================================================================
+        // STAGE 1: BUILD
+        // ======================================================================
+        stage('Build') {
+            steps {
+                script {
+                    echo "=== Building ${APP_NAME} version ${IMAGE_TAG} ==="
+                    
+                    // Build Docker image
+                    sh """
+                        docker build \
+                            --build-arg BUILD_DATE="\$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+                            --build-arg VCS_REF="${env.GIT_COMMIT?.take(7)}" \
+                            --build-arg VERSION="${IMAGE_TAG}" \
+                            --tag "${IMAGE_NAME}:${IMAGE_TAG}" \
+                            --file Dockerfile \
+                            .
+                    """
+                    
+                    // Save image for subsequent stages
+                    sh "docker save ${IMAGE_NAME}:${IMAGE_TAG} > image.tar"
+                }
+            }
+        }
+
+        // ======================================================================
+        // STAGE 2: UNIT TEST
+        // ======================================================================
+        stage('Unit Test') {
+            steps {
+                script {
+                    echo "=== Running Unit Tests ==="
+                    
+                    sh """
+                        if [ -f "Makefile" ] && grep -q "test" Makefile; then
+                            make test
+                        elif [ -f "package.json" ]; then
+                            docker run --rm -v "\$(pwd):/app" -w /app node:18-alpine sh -c "npm ci && npm test"
+                        elif [ -f "pom.xml" ]; then
+                            docker run --rm -v "\$(pwd):/app" -w /app maven:3.9-eclipse-temurin-17 mvn test
+                        elif [ -f "go.mod" ]; then
+                            docker run --rm -v "\$(pwd):/app" -w /app golang:1.21 go test ./...
+                        else
+                            echo "No test framework detected, skipping unit tests"
+                        fi
+                    """
+                }
+            }
+        }
+
+        // ======================================================================
+        // STAGE 3: SECURITY SCAN (Parallel)
+        // ======================================================================
+        stage('Security Scan') {
+            parallel {
+                // SAST - Static Application Security Testing
+                stage('SAST (Semgrep)') {
+                    steps {
+                        script {
+                            echo "=== Running SAST Scan with Semgrep ==="
+                            sh """
+                                docker run --rm \
+                                    -v "\$(pwd):/src" \
+                                    returntocorp/semgrep:latest \
+                                    semgrep scan \
+                                        --config ${SEMGREP_RULES} \
+                                        --json \
+                                        --output /src/semgrep-results.json \
+                                        --severity ERROR \
+                                        --severity WARNING \
+                                        /src
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'semgrep-results.json', allowEmptyArchive: true
+                        }
+                    }
+                }
+
+                // Secret Detection
+                stage('Secret Detection (GitLeaks)') {
+                    steps {
+                        script {
+                            echo "=== Running Secret Detection with GitLeaks ==="
+                            sh """
+                                docker run --rm \
+                                    -v "\$(pwd):/src" \
+                                    zricethezav/gitleaks:latest \
+                                    detect \
+                                        --source /src \
+                                        --report-path /src/gitleaks-report.json \
+                                        --report-format json \
+                                        --no-git
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'gitleaks-report.json', allowEmptyArchive: true
+                        }
+                    }
+                }
+
+                // Container Image Scan
+                stage('Image Scan (Trivy)') {
+                    steps {
+                        script {
+                            echo "=== Running Container Scan with Trivy ==="
+                            sh """
+                                docker run --rm \
+                                    -v /var/run/docker.sock:/var/run/docker.sock \
+                                    -v "\$(pwd):/output" \
+                                    aquasec/trivy:latest \
+                                    image \
+                                        --severity ${TRIVY_SEVERITY} \
+                                        --format json \
+                                        --output /output/trivy-results.json \
+                                        --ignore-unfixed \
+                                        --exit-code 1 \
+                                        ${IMAGE_NAME}:${IMAGE_TAG}
+                            """
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'trivy-results.json', allowEmptyArchive: true
+                        }
+                    }
+                }
+            }
+        }
+
+        // ======================================================================
+        // STAGE 4: INTEGRATION TEST
+        // ======================================================================
+        stage('Integration Test') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                }
+            }
+            steps {
+                script {
+                    echo "=== Running Integration Tests ==="
+                    sh """
+                        if [ -f "docker-compose.test.yml" ]; then
+                            docker compose -f docker-compose.test.yml up \
+                                --abort-on-container-exit \
+                                --exit-code-from test
+                        elif [ -f "tests/integration/run.sh" ]; then
+                            chmod +x tests/integration/run.sh
+                            ./tests/integration/run.sh
+                        else
+                            echo "No integration test found, skipping..."
+                        fi
+                    """
+                }
+            }
+        }
+
+        // ======================================================================
+        // STAGE 5: PACKAGE (Push to Registry)
+        // ======================================================================
+        stage('Package') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'develop'
+                }
+            }
+            steps {
+                script {
+                    echo "=== Pushing Image to Harbor Registry ==="
+                    
+                    withCredentials([usernamePassword(
+                        credentialsId: 'harbor-credentials',
+                        usernameVariable: 'HARBOR_USER',
+                        passwordVariable: 'HARBOR_PASS'
+                    )]) {
+                        sh """
+                            echo "\${HARBOR_PASS}" | docker login ${HARBOR_URL} \
+                                -u "\${HARBOR_USER}" --password-stdin
+                            
+                            docker push ${IMAGE_NAME}:${IMAGE_TAG}
+                            
+                            # Tag branch-specific
+                            if [ "${env.BRANCH_NAME}" = "main" ]; then
+                                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:stable
+                                docker push ${IMAGE_NAME}:stable
+                            elif [ "${env.BRANCH_NAME}" = "develop" ]; then
+                                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:develop
+                                docker push ${IMAGE_NAME}:develop
+                            fi
+                            
+                            docker logout ${HARBOR_URL}
+                        """
+                    }
+                    
+                    echo "Image pushed: ${IMAGE_NAME}:${IMAGE_TAG}"
+                }
+            }
+        }
+
+        // ======================================================================
+        // STAGE 6: DEPLOY TO DEV (Auto)
+        // ======================================================================
+        stage('Deploy DEV') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                script {
+                    echo "=== Deploying ${APP_NAME} to DEV ==="
+                    
+                    withCredentials([usernamePassword(
+                        credentialsId: 'argocd-credentials',
+                        usernameVariable: 'ARGOCD_USER',
+                        passwordVariable: 'ARGOCD_PASS'
+                    )]) {
+                        sh """
+                            # Install ArgoCD CLI
+                            curl -sSL -o /usr/local/bin/argocd \
+                                "https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64"
+                            chmod +x /usr/local/bin/argocd
+                            
+                            # Login to ArgoCD
+                            argocd login ${ARGOCD_SERVER} \
+                                --username "\${ARGOCD_USER}" \
+                                --password "\${ARGOCD_PASS}" \
+                                --insecure
+                            
+                            # Update image tag
+                            argocd app set ${APP_NAME}-dev \
+                                --parameter image.repository=${IMAGE_NAME} \
+                                --parameter image.tag=${IMAGE_TAG}
+                            
+                            # Sync and wait
+                            argocd app sync ${APP_NAME}-dev --force --prune
+                            argocd app wait ${APP_NAME}-dev --timeout 300 --health
+                        """
+                    }
+                    
+                    echo "=== DEV deployment successful ==="
+                }
+            }
+        }
+
+        // ======================================================================
+        // STAGE 7: VERIFY DEV
+        // ======================================================================
+        stage('Verify DEV') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                script {
+                    echo "=== Verifying DEV Deployment ==="
+                    
+                    def healthUrl = "https://${APP_NAME}-dev.${env.DOMAIN ?: 'company.internal'}/health"
+                    def maxRetries = 10
+                    def healthy = false
+                    
+                    for (int i = 1; i <= maxRetries; i++) {
+                        def status = sh(
+                            script: "curl -s -o /dev/null -w '%{http_code}' --max-time 10 --insecure ${healthUrl}",
+                            returnStdout: true
+                        ).trim()
+                        
+                        if (status == '200') {
+                            echo "Health check PASSED (attempt ${i}/${maxRetries})"
+                            healthy = true
+                            break
+                        }
+                        
+                        echo "Attempt ${i}/${maxRetries} - HTTP ${status}, retrying..."
+                        sleep(10)
+                    }
+                    
+                    if (!healthy) {
+                        error "Health check FAILED after ${maxRetries} attempts"
+                    }
+                }
+            }
+        }
+
+        // ======================================================================
+        // STAGE 8: DEPLOY TO PROD (Manual Approval)
+        // ======================================================================
+        stage('Approval PROD') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    // Manual approval gate
+                    def approver = input(
+                        message: "Deploy ${APP_NAME}:${IMAGE_TAG} to PRODUCTION?",
+                        ok: 'Deploy to Production',
+                        submitterParameter: 'approver'
+                    )
+                    echo "Approved by: ${approver}"
+                }
+            }
+        }
+
+        stage('Deploy PROD') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    echo "=== Deploying ${APP_NAME} to PRODUCTION ==="
+                    echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}"
+                    
+                    withCredentials([usernamePassword(
+                        credentialsId: 'argocd-credentials',
+                        usernameVariable: 'ARGOCD_USER',
+                        passwordVariable: 'ARGOCD_PASS'
+                    )]) {
+                        sh """
+                            argocd login ${ARGOCD_SERVER} \
+                                --username "\${ARGOCD_USER}" \
+                                --password "\${ARGOCD_PASS}" \
+                                --insecure
+                            
+                            argocd app set ${APP_NAME}-prod \
+                                --parameter image.repository=${IMAGE_NAME} \
+                                --parameter image.tag=${IMAGE_TAG}
+                            
+                            argocd app sync ${APP_NAME}-prod --force --prune
+                            argocd app wait ${APP_NAME}-prod --timeout 600 --health
+                        """
+                    }
+                    
+                    echo "=== PRODUCTION deployment successful ==="
+                }
+            }
+        }
+
+        // ======================================================================
+        // STAGE 9: VERIFY PROD
+        // ======================================================================
+        stage('Verify PROD') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    echo "=== Verifying PRODUCTION Deployment ==="
+                    
+                    def healthUrl = "https://${APP_NAME}.${env.DOMAIN ?: 'company.internal'}/health"
+                    def maxRetries = 15
+                    def healthy = false
+                    
+                    for (int i = 1; i <= maxRetries; i++) {
+                        def status = sh(
+                            script: "curl -s -o /dev/null -w '%{http_code}' --max-time 10 --insecure ${healthUrl}",
+                            returnStdout: true
+                        ).trim()
+                        
+                        if (status == '200') {
+                            echo "Health check PASSED (attempt ${i}/${maxRetries})"
+                            healthy = true
+                            break
+                        }
+                        
+                        echo "Attempt ${i}/${maxRetries} - HTTP ${status}, retrying..."
+                        sleep(10)
+                    }
+                    
+                    if (!healthy) {
+                        error "Health check FAILED after ${maxRetries} attempts"
+                    }
+                }
+            }
+        }
+    }
+
+    // ==========================================================================
+    // Post Actions
+    // ==========================================================================
+    post {
+        success {
+            script {
+                if (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'develop') {
+                    sh """
+                        ./cicd-template/scripts/notify.sh success ${env.BRANCH_NAME == 'main' ? 'prod' : 'dev'}
+                    """
+                }
+            }
+        }
+        failure {
+            script {
+                sh """
+                    ./cicd-template/scripts/notify.sh failure ${env.BRANCH_NAME == 'main' ? 'prod' : 'dev'}
+                """
+            }
+        }
+        always {
+            // Cleanup Docker images
+            sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true"
+            sh "rm -f image.tar"
+            
+            // Archive scan reports
+            archiveArtifacts artifacts: '**/trivy-*.json,**/semgrep-*.json,**/gitleaks-*.json', 
+                             allowEmptyArchive: true
+        }
+    }
+}

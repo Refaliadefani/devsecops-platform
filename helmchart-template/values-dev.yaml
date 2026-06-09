@@ -1,0 +1,121 @@
+# ==============================================================================
+# DEV Environment Values Override
+# ==============================================================================
+# Override values khusus untuk environment Development.
+# Prioritas: values-dev.yaml > values.yaml (default)
+# ==============================================================================
+
+# -- Reduced replicas for DEV
+replicaCount: 1
+
+# -- Autoscaling disabled in DEV
+autoscaling:
+  enabled: false
+
+# -- Lower resource limits for DEV
+resources:
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+  limits:
+    cpu: "250m"
+    memory: "256Mi"
+
+# -- DEV-specific environment
+env:
+  - name: APP_ENV
+    value: "development"
+  - name: LOG_LEVEL
+    value: "debug"
+  - name: LOG_FORMAT
+    value: "json"
+
+# -- DEV ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: "my-application-dev.company.internal"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: "my-application-dev-tls"
+      hosts:
+        - "my-application-dev.company.internal"
+
+# -- DEV external secrets (different Vault path)
+externalSecrets:
+  enabled: true
+  refreshInterval: "5m"
+  secretStoreName: "vault-backend"
+  secretStoreKind: "ClusterSecretStore"
+  target:
+    name: "app-secrets"
+  data:
+    - secretKey: DATABASE_URL
+      remoteRef:
+        key: "secret/data/apps/my-application/dev"
+        property: "database_url"
+    - secretKey: API_KEY
+      remoteRef:
+        key: "secret/data/apps/my-application/dev"
+        property: "api_key"
+
+# -- Relaxed probes for DEV (faster startup)
+probes:
+  liveness:
+    enabled: true
+    path: /health
+    port: 8080
+    initialDelaySeconds: 15
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 5
+  readiness:
+    enabled: true
+    path: /ready
+    port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 5
+  startup:
+    enabled: true
+    path: /health
+    port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 3
+    failureThreshold: 30
+
+# -- PDB disabled in DEV (single replica)
+podDisruptionBudget:
+  enabled: false
+
+# -- Network policy more permissive in DEV
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+        - namespaceSelector:
+            matchLabels:
+              environment: development
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 3306
+        - protocol: UDP
+          port: 53

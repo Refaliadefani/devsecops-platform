@@ -1,0 +1,74 @@
+# ==============================================================================
+# ArgoCD AppProject
+# ==============================================================================
+# Mendefinisikan project boundary untuk aplikasi.
+# Project membatasi source repository, destination cluster/namespace,
+# dan resource types yang boleh di-deploy.
+# ==============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: applications
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: "Project untuk deployment aplikasi bisnis"
+
+  # Source repositories yang diizinkan
+  sourceRepos:
+    - "https://git.company.internal/apps/*"
+    - "https://git.company.internal/platform/devsecops-platform.git"
+
+  # Destination cluster dan namespace yang diizinkan
+  destinations:
+    # DEV environment
+    - server: https://kubernetes.default.svc
+      namespace: "*-dev"
+    # PROD environment
+    - server: https://kubernetes.default.svc
+      namespace: "*-prod"
+
+  # Resource whitelist - hanya resource ini yang boleh di-deploy
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: Secret
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ServiceAccount
+    - group: apps
+      kind: Deployment
+    - group: networking.k8s.io
+      kind: Ingress
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+    - group: policy
+      kind: PodDisruptionBudget
+    - group: external-secrets.io
+      kind: ExternalSecret
+
+  # Roles untuk RBAC
+  roles:
+    - name: developer
+      description: "Read-only access untuk developer"
+      policies:
+        - p, proj:applications:developer, applications, get, applications/*, allow
+        - p, proj:applications:developer, applications, sync, applications/*-dev, allow
+      groups:
+        - developers
+
+    - name: devops
+      description: "Full access untuk DevOps team"
+      policies:
+        - p, proj:applications:devops, applications, *, applications/*, allow
+      groups:
+        - devops-team

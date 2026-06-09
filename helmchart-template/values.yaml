@@ -1,0 +1,200 @@
+# ==============================================================================
+# Default Values - Helm Chart Template
+# ==============================================================================
+# File ini berisi default values yang digunakan sebagai base configuration.
+# Override per environment dilakukan via values-dev.yaml dan values-prod.yaml.
+# ==============================================================================
+
+# -- Application metadata
+app:
+  name: "my-application"
+  team: "backend"
+  version: "1.0.0"
+
+# -- Container image configuration
+image:
+  repository: "harbor.company.internal/apps/my-application"
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# -- Image pull secrets for private registry
+imagePullSecrets:
+  - name: harbor-registry-secret
+
+# -- Replica configuration
+replicaCount: 2
+
+# -- Deployment strategy
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# -- Container port configuration
+containerPort: 8080
+
+# -- Service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+# -- Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  hosts:
+    - host: "my-application.company.internal"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: "my-application-tls"
+      hosts:
+        - "my-application.company.internal"
+
+# -- Resource limits and requests
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+# -- Horizontal Pod Autoscaler
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+# -- Health check probes
+probes:
+  liveness:
+    enabled: true
+    path: /health
+    port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /ready
+    port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  startup:
+    enabled: true
+    path: /health
+    port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 30
+
+# -- Environment variables (non-sensitive)
+env:
+  - name: APP_ENV
+    value: "production"
+  - name: LOG_LEVEL
+    value: "info"
+  - name: LOG_FORMAT
+    value: "json"
+
+# -- Environment variables from ConfigMap/Secret references
+envFrom: []
+  # - configMapRef:
+  #     name: app-config
+  # - secretRef:
+  #     name: app-secrets
+
+# -- External Secrets (HashiCorp Vault integration)
+externalSecrets:
+  enabled: true
+  refreshInterval: "1h"
+  secretStoreName: "vault-backend"
+  secretStoreKind: "ClusterSecretStore"
+  target:
+    name: "app-secrets"
+  data:
+    - secretKey: DATABASE_URL
+      remoteRef:
+        key: "secret/data/apps/my-application"
+        property: "database_url"
+    - secretKey: API_KEY
+      remoteRef:
+        key: "secret/data/apps/my-application"
+        property: "api_key"
+
+# -- Service Account
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# -- Pod Security Context
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+# -- Container Security Context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Network Policy
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: UDP
+          port: 53
+
+# -- Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# -- Node selector
+nodeSelector: {}
+
+# -- Tolerations
+tolerations: []
+
+# -- Affinity rules
+affinity: {}
+
+# -- Extra labels for all resources
+extraLabels: {}
+
+# -- Extra annotations for pods
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"

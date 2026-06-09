@@ -1,0 +1,64 @@
+# ==============================================================================
+# ArgoCD Application - DEV Environment
+# ==============================================================================
+# Konfigurasi ArgoCD Application untuk deployment ke DEV namespace.
+# Auto-sync ENABLED: setiap perubahan di Git otomatis di-deploy ke DEV.
+# ==============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-application-dev
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: my-application
+    environment: development
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: applications
+
+  source:
+    # Repository yang berisi Helm chart
+    repoURL: "https://git.company.internal/apps/my-application.git"
+    targetRevision: develop
+    path: helmchart
+
+    # Helm parameters
+    helm:
+      releaseName: my-application
+      valueFiles:
+        - values.yaml
+        - values-dev.yaml
+      # Parameter override dari CI/CD pipeline
+      parameters:
+        - name: image.tag
+          value: "latest"  # Will be overridden by CI/CD
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: my-application-dev
+
+  # Sync Policy - AUTO for DEV
+  syncPolicy:
+    automated:
+      prune: true          # Remove resources not in Git
+      selfHeal: true       # Fix drift automatically
+      allowEmpty: false    # Don't sync if source is empty
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # Health checks and status
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas  # Ignore HPA-managed replicas

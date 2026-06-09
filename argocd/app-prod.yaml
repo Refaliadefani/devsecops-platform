@@ -1,0 +1,70 @@
+# ==============================================================================
+# ArgoCD Application - PROD Environment
+# ==============================================================================
+# Konfigurasi ArgoCD Application untuk deployment ke PROD namespace.
+# Auto-sync DISABLED: deployment ke PROD memerlukan manual approval.
+# Self-heal ENABLED: jika ada drift, ArgoCD akan mengembalikan ke desired state.
+# ==============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-application-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: my-application
+    environment: production
+  annotations:
+    # Notifikasi deployment
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: deployments
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: deployments-alerts
+    notifications.argoproj.io/subscribe.on-health-degraded.slack: deployments-alerts
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: applications
+
+  source:
+    # Repository yang berisi Helm chart
+    repoURL: "https://git.company.internal/apps/my-application.git"
+    targetRevision: main
+    path: helmchart
+
+    # Helm parameters
+    helm:
+      releaseName: my-application
+      valueFiles:
+        - values.yaml
+        - values-prod.yaml
+      parameters:
+        - name: image.tag
+          value: "stable"  # Will be overridden by CI/CD
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: my-application-prod
+
+  # Sync Policy - MANUAL for PROD
+  syncPolicy:
+    # automated is NOT set - requires manual sync or CI/CD trigger
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - PruneLast=true
+      - ApplyOutOfSyncOnly=true
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m
+
+  # Revision history for rollback capability
+  revisionHistoryLimit: 10
+
+  # Ignore HPA-managed replicas
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        - /spec/replicas

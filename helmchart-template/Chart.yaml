@@ -1,0 +1,19 @@
+apiVersion: v2
+name: app-template
+description: |
+  Reusable Helm Chart template untuk deployment aplikasi ke Kubernetes.
+  Dirancang untuk mendukung multi-environment (DEV/PROD) dengan konfigurasi
+  yang aman dan terstandar sesuai rancangan DevSecOps platform.
+
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+
+keywords:
+  - application
+  - devsecops
+  - template
+
+maintainers:
+  - name: DevOps Team
+    email: devops@company.internal

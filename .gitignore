@@ -1,0 +1,58 @@
+# ==============================================================================
+# .gitignore - DevSecOps Platform
+# ==============================================================================
+
+# Credentials & Secrets
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
+kubeconfig
+.env
+.env.*
+!.env.example
+secrets/
+**/secrets.yaml
+**/secret-values.yaml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+image.tar
+*.tar.gz
+dist/
+build/
+
+# Test reports (generated during CI)
+trivy-reports/
+semgrep-reports/
+test-results/
+coverage/
+
+# Helm
+helmchart-template/charts/
+*.tgz
+
+# Personal docs (not for public repo)
+docs/KNOWLEDGE-TRANSFER.md
+docs/CHEAT-SHEET.md
+docs/HANDS-ON-AZURE.md
+docs/pdf-style.css
+docs/devsecops-design.pdf
+docs/diagrams/

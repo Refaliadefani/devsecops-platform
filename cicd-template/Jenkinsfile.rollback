@@ -1,0 +1,121 @@
+// ==============================================================================
+// Jenkinsfile.rollback - Production Rollback Pipeline
+// ==============================================================================
+// Pipeline terpisah untuk melakukan rollback deployment di production.
+// Trigger manual dari Jenkins UI.
+//
+// Cara pakai:
+//   1. Buat Jenkins job baru (Pipeline)
+//   2. Arahkan ke file ini sebagai Jenkinsfile path
+//   3. Trigger manual saat butuh rollback
+// ==============================================================================
+
+pipeline {
+    agent any
+
+    parameters {
+        string(name: 'APP_NAME', description: 'Nama aplikasi yang akan di-rollback')
+        string(name: 'ENVIRONMENT', defaultValue: 'prod', description: 'Environment target (dev/prod)')
+        string(name: 'REVISION', defaultValue: '', description: 'ArgoCD revision number (kosongkan untuk rollback ke revision sebelumnya)')
+    }
+
+    environment {
+        ARGOCD_SERVER = credentials('argocd-url')
+    }
+
+    stages {
+        stage('Confirm Rollback') {
+            steps {
+                script {
+                    def target = "${params.APP_NAME}-${params.ENVIRONMENT}"
+                    input(
+                        message: "Confirm ROLLBACK ${target}?",
+                        ok: 'Execute Rollback'
+                    )
+                }
+            }
+        }
+
+        stage('Rollback') {
+            steps {
+                script {
+                    def argoApp = "${params.APP_NAME}-${params.ENVIRONMENT}"
+                    
+                    withCredentials([usernamePassword(
+                        credentialsId: 'argocd-credentials',
+                        usernameVariable: 'ARGOCD_USER',
+                        passwordVariable: 'ARGOCD_PASS'
+                    )]) {
+                        sh """
+                            # Login to ArgoCD
+                            argocd login ${ARGOCD_SERVER} \
+                                --username "\${ARGOCD_USER}" \
+                                --password "\${ARGOCD_PASS}" \
+                                --insecure
+                            
+                            echo "=== Current deployment history ==="
+                            argocd app history ${argoApp}
+                            
+                            # Execute rollback
+                            if [ -n "${params.REVISION}" ]; then
+                                echo "=== Rolling back to revision ${params.REVISION} ==="
+                                argocd app rollback ${argoApp} ${params.REVISION}
+                            else
+                                echo "=== Rolling back to previous revision ==="
+                                CURRENT=\$(argocd app history ${argoApp} | tail -1 | awk '{print \$1}')
+                                PREVIOUS=\$((CURRENT - 1))
+                                argocd app rollback ${argoApp} \${PREVIOUS}
+                            fi
+                            
+                            # Wait for healthy state
+                            argocd app wait ${argoApp} --timeout 300 --health
+                            
+                            echo "=== Rollback successful ==="
+                            argocd app get ${argoApp}
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Verify') {
+            steps {
+                script {
+                    def domain = env.DOMAIN ?: 'company.internal'
+                    def subdomain = params.ENVIRONMENT == 'prod' ? params.APP_NAME : "${params.APP_NAME}-dev"
+                    def healthUrl = "https://${subdomain}.${domain}/health"
+                    
+                    echo "Verifying: ${healthUrl}"
+                    
+                    def healthy = false
+                    for (int i = 1; i <= 10; i++) {
+                        def status = sh(
+                            script: "curl -s -o /dev/null -w '%{http_code}' --max-time 10 --insecure ${healthUrl}",
+                            returnStdout: true
+                        ).trim()
+                        
+                        if (status == '200') {
+                            echo "Rollback verified - application healthy"
+                            healthy = true
+                            break
+                        }
+                        sleep(10)
+                    }
+                    
+                    if (!healthy) {
+                        error "Post-rollback health check FAILED"
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            sh "./cicd-template/scripts/notify.sh rollback ${params.ENVIRONMENT} 'Rollback ${params.APP_NAME} successful'"
+        }
+        failure {
+            sh "./cicd-template/scripts/notify.sh failure ${params.ENVIRONMENT} 'Rollback ${params.APP_NAME} FAILED'"
+        }
+    }
+}

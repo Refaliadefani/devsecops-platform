@@ -1,0 +1,140 @@
+# ==============================================================================
+# PROD Environment Values Override
+# ==============================================================================
+# Override values khusus untuk environment Production.
+# Prioritas: values-prod.yaml > values.yaml (default)
+# Konfigurasi PROD lebih ketat: lebih banyak replicas, resource lebih besar,
+# security lebih strict.
+# ==============================================================================
+
+# -- Higher replicas for PROD availability
+replicaCount: 3
+
+# -- Autoscaling enabled with higher thresholds
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 15
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: 75
+
+# -- Production resource allocation
+resources:
+  requests:
+    cpu: "200m"
+    memory: "256Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+
+# -- PROD-specific environment
+env:
+  - name: APP_ENV
+    value: "production"
+  - name: LOG_LEVEL
+    value: "warn"
+  - name: LOG_FORMAT
+    value: "json"
+
+# -- PROD ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+  hosts:
+    - host: "my-application.company.internal"
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: "my-application-tls"
+      hosts:
+        - "my-application.company.internal"
+
+# -- PROD external secrets (production Vault path)
+externalSecrets:
+  enabled: true
+  refreshInterval: "1h"
+  secretStoreName: "vault-backend"
+  secretStoreKind: "ClusterSecretStore"
+  target:
+    name: "app-secrets"
+  data:
+    - secretKey: DATABASE_URL
+      remoteRef:
+        key: "secret/data/apps/my-application/prod"
+        property: "database_url"
+    - secretKey: API_KEY
+      remoteRef:
+        key: "secret/data/apps/my-application/prod"
+        property: "api_key"
+
+# -- Stricter probes for PROD
+probes:
+  liveness:
+    enabled: true
+    path: /health
+    port: 8080
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /ready
+    port: 8080
+    initialDelaySeconds: 15
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  startup:
+    enabled: true
+    path: /health
+    port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 5
+    failureThreshold: 30
+
+# -- PDB enabled for PROD HA
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# -- Strict network policy for PROD
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 5432
+        - protocol: UDP
+          port: 53
+
+# -- Pod anti-affinity for HA (spread across nodes)
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - my-application
+          topologyKey: kubernetes.io/hostname

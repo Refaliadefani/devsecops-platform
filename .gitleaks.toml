@@ -1,0 +1,30 @@
+# ==============================================================================
+# GitLeaks Configuration
+# ==============================================================================
+# Konfigurasi rules untuk secret detection.
+# File ini mendefinisikan patterns yang harus dideteksi dan paths yang di-exclude.
+# ==============================================================================
+
+title = "DevSecOps Platform GitLeaks Config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlisted files and patterns"
+
+# Files yang boleh mengandung placeholder
+paths = [
+  '''\.gitleaks\.toml$''',
+  '''docs/.*\.md$''',
+  '''README\.md$''',
+  '''values.*\.yaml$''',    # Helm values dengan placeholder
+]
+
+# Regex patterns yang diizinkan (placeholder values)
+regexes = [
+  '''(\$\{[A-Z_]+\})''',                    # ${VARIABLE_NAME} placeholders
+  '''(harbor\.company\.internal)''',          # Example domain
+  '''(git\.company\.internal)''',             # Example domain
+  '''(my-application)''',                     # Example app name
+]
