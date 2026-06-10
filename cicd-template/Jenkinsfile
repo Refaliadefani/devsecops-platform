@@ -12,8 +12,8 @@
 //
 // Credentials yang harus di-set di Jenkins:
 //   - harbor-credentials     (Username/Password - Harbor robot account)
-//   - argocd-credentials     (Username/Password - ArgoCD CI account)
-//   - slack-webhook          (Secret text - Slack webhook URL)
+//   - git-credentials         (Username/Password - Git PAT untuk GitOps repo)
+//   - slack-webhook          (Secret text - Slack webhook URL, opsional)
 // ==============================================================================
 
 pipeline {
@@ -36,15 +36,12 @@ pipeline {
         KUBE_NAMESPACE_DEV  = "${APP_NAME}-dev"
         KUBE_NAMESPACE_PROD = "${APP_NAME}-prod"
         
-        // Helm
-        HELM_CHART_PATH     = "./helmchart"
+        // GitOps Repository
+        GITOPS_REPO         = "git.company.internal/platform/gitops-config.git"
         
         // Security Scanning
         TRIVY_SEVERITY      = "CRITICAL,HIGH"
         SEMGREP_RULES       = "auto"
-        
-        // ArgoCD
-        ARGOCD_SERVER       = credentials('argocd-url')
         
         // Notification
         SLACK_CHANNEL       = "#deployments"
@@ -272,7 +269,7 @@ pipeline {
         }
 
         // ======================================================================
-        // STAGE 6: DEPLOY TO DEV (Auto)
+        // STAGE 6: DEPLOY TO DEV (GitOps - Update Git Repository)
         // ======================================================================
         stage('Deploy DEV') {
             when {
@@ -280,37 +277,32 @@ pipeline {
             }
             steps {
                 script {
-                    echo "=== Deploying ${APP_NAME} to DEV ==="
+                    echo "=== Updating GitOps repo for DEV deployment ==="
                     
                     withCredentials([usernamePassword(
-                        credentialsId: 'argocd-credentials',
-                        usernameVariable: 'ARGOCD_USER',
-                        passwordVariable: 'ARGOCD_PASS'
+                        credentialsId: 'git-credentials',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_PASS'
                     )]) {
                         sh """
-                            # Install ArgoCD CLI
-                            curl -sSL -o /usr/local/bin/argocd \
-                                "https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64"
-                            chmod +x /usr/local/bin/argocd
+                            rm -rf /tmp/gitops
+                            git clone https://\${GIT_USER}:\${GIT_PASS}@\${GITOPS_REPO} /tmp/gitops
+                            cd /tmp/gitops
                             
-                            # Login to ArgoCD
-                            argocd login ${ARGOCD_SERVER} \
-                                --username "\${ARGOCD_USER}" \
-                                --password "\${ARGOCD_PASS}" \
-                                --insecure
+                            # Update image tag in dev values
+                            sed -i 's|tag: .*|tag: "${IMAGE_TAG}"|' apps/\${APP_NAME}-dev/values.yaml
                             
-                            # Update image tag
-                            argocd app set ${APP_NAME}-dev \
-                                --parameter image.repository=${IMAGE_NAME} \
-                                --parameter image.tag=${IMAGE_TAG}
+                            git config user.email "jenkins@ci.local"
+                            git config user.name "Jenkins CI"
+                            git add .
+                            git commit -m "deploy(dev): \${APP_NAME} image tag ${IMAGE_TAG}"
+                            git push
                             
-                            # Sync and wait
-                            argocd app sync ${APP_NAME}-dev --force --prune
-                            argocd app wait ${APP_NAME}-dev --timeout 300 --health
+                            rm -rf /tmp/gitops
                         """
                     }
                     
-                    echo "=== DEV deployment successful ==="
+                    echo "=== GitOps commit pushed — ArgoCD will auto-sync ==="
                 }
             }
         }
@@ -379,30 +371,33 @@ pipeline {
             }
             steps {
                 script {
-                    echo "=== Deploying ${APP_NAME} to PRODUCTION ==="
+                    echo "=== Updating GitOps repo for PRODUCTION deployment ==="
                     echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}"
                     
                     withCredentials([usernamePassword(
-                        credentialsId: 'argocd-credentials',
-                        usernameVariable: 'ARGOCD_USER',
-                        passwordVariable: 'ARGOCD_PASS'
+                        credentialsId: 'git-credentials',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_PASS'
                     )]) {
                         sh """
-                            argocd login ${ARGOCD_SERVER} \
-                                --username "\${ARGOCD_USER}" \
-                                --password "\${ARGOCD_PASS}" \
-                                --insecure
+                            rm -rf /tmp/gitops
+                            git clone https://\${GIT_USER}:\${GIT_PASS}@\${GITOPS_REPO} /tmp/gitops
+                            cd /tmp/gitops
                             
-                            argocd app set ${APP_NAME}-prod \
-                                --parameter image.repository=${IMAGE_NAME} \
-                                --parameter image.tag=${IMAGE_TAG}
+                            # Update image tag in prod values
+                            sed -i 's|tag: .*|tag: "${IMAGE_TAG}"|' apps/\${APP_NAME}-prod/values.yaml
                             
-                            argocd app sync ${APP_NAME}-prod --force --prune
-                            argocd app wait ${APP_NAME}-prod --timeout 600 --health
+                            git config user.email "jenkins@ci.local"
+                            git config user.name "Jenkins CI"
+                            git add .
+                            git commit -m "deploy(prod): \${APP_NAME} image tag ${IMAGE_TAG} [approved]"
+                            git push
+                            
+                            rm -rf /tmp/gitops
                         """
                     }
                     
-                    echo "=== PRODUCTION deployment successful ==="
+                    echo "=== PRODUCTION GitOps commit pushed — ArgoCD will sync ==="
                 }
             }
         }
@@ -453,17 +448,19 @@ pipeline {
         success {
             script {
                 if (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'develop') {
-                    sh """
-                        ./cicd-template/scripts/notify.sh success ${env.BRANCH_NAME == 'main' ? 'prod' : 'dev'}
-                    """
+                    echo "Pipeline SUCCESS — ${APP_NAME}:${IMAGE_TAG} deployed via GitOps"
+                    // Uncomment jika Slack webhook sudah di-set:
+                    // slackSend channel: SLACK_CHANNEL, color: 'good',
+                    //     message: "✅ ${APP_NAME}:${IMAGE_TAG} deployed to ${env.BRANCH_NAME == 'main' ? 'PROD' : 'DEV'}"
                 }
             }
         }
         failure {
             script {
-                sh """
-                    ./cicd-template/scripts/notify.sh failure ${env.BRANCH_NAME == 'main' ? 'prod' : 'dev'}
-                """
+                echo "Pipeline FAILED — ${APP_NAME}:${IMAGE_TAG}"
+                // Uncomment jika Slack webhook sudah di-set:
+                // slackSend channel: SLACK_CHANNEL, color: 'danger',
+                //     message: "❌ ${APP_NAME}:${IMAGE_TAG} pipeline failed"
             }
         }
         always {

@@ -77,14 +77,15 @@ spec:
           env:
             {{- toYaml . | nindent 12 }}
           {{- end }}
-          {{- with .Values.envFrom }}
+          {{- if or .Values.envFrom .Values.externalSecrets.enabled }}
           envFrom:
+            {{- with .Values.envFrom }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
-          {{- if .Values.externalSecrets.enabled }}
-          envFrom:
+            {{- end }}
+            {{- if .Values.externalSecrets.enabled }}
             - secretRef:
                 name: {{ .Values.externalSecrets.target.name }}
+            {{- end }}
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
