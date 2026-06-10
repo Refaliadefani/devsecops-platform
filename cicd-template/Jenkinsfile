@@ -11,6 +11,7 @@
 //   - Slack Notification plugin (opsional)
 //
 // Credentials yang harus di-set di Jenkins:
+//   - harbor-url             (Secret text - Harbor registry URL)
 //   - harbor-credentials     (Username/Password - Harbor robot account)
 //   - git-credentials         (Username/Password - Git PAT untuk GitOps repo)
 //   - slack-webhook          (Secret text - Slack webhook URL, opsional)

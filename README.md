@@ -74,9 +74,8 @@ Buat **Multibranch Pipeline** job di Jenkins yang mengarah ke repo tersebut.
 |---------------|------|-----------|
 | `harbor-url` | Secret text | Harbor registry URL (e.g., `harbor.company.internal`) |
 | `harbor-credentials` | Username/Password | Harbor robot account |
-| `argocd-url` | Secret text | ArgoCD server URL |
-| `argocd-credentials` | Username/Password | ArgoCD CI account |
-| `slack-webhook` | Secret text | Slack incoming webhook URL |
+| `git-credentials` | Username/Password | Git PAT untuk push ke GitOps repo |
+| `slack-webhook` | Secret text | Slack incoming webhook URL (opsional) |
 
 **Required Jenkins Plugins:**
 - Pipeline
