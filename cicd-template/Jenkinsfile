@@ -80,9 +80,6 @@ pipeline {
                             --file Dockerfile \
                             .
                     """
-                    
-                    // Save image for subsequent stages
-                    sh "docker save ${IMAGE_NAME}:${IMAGE_TAG} > image.tar"
                 }
             }
         }
@@ -466,7 +463,6 @@ pipeline {
         always {
             // Cleanup Docker images
             sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true"
-            sh "rm -f image.tar"
             
             // Archive scan reports
             archiveArtifacts artifacts: '**/trivy-*.json,**/semgrep-*.json,**/gitleaks-*.json', 

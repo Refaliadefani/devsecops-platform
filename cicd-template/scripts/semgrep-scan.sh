@@ -2,8 +2,17 @@
 # ==============================================================================
 # Semgrep SAST Scan Script
 # ==============================================================================
-# Runs Static Application Security Testing using Semgrep.
+# Standalone script untuk SAST (Static Application Security Testing).
+# Bisa digunakan untuk:
+#   - Local scan di developer machine sebelum push
+#   - CI environment yang sudah install Semgrep
+#   - Pre-commit hook integration
+#
+# Catatan: Jenkinsfile utama menjalankan Semgrep via Docker container.
+#          Script ini untuk penggunaan langsung (Semgrep terinstall lokal).
+#
 # Usage: ./semgrep-scan.sh [rules] [target-dir]
+# Example: ./semgrep-scan.sh auto ./src
 # ==============================================================================
 
 set -euo pipefail

@@ -59,6 +59,7 @@ externalSecrets:
       remoteRef:
         key: "secret/data/apps/my-application/dev"
         property: "database_url"
+        property: "database_url"
     - secretKey: API_KEY
       remoteRef:
         key: "secret/data/apps/my-application/dev"

@@ -1,13 +1,18 @@
 // ==============================================================================
 // Jenkinsfile.rollback - Production Rollback Pipeline
 // ==============================================================================
-// Pipeline terpisah untuk melakukan rollback deployment di production.
-// Trigger manual dari Jenkins UI.
+// Pipeline untuk rollback deployment menggunakan pendekatan GitOps.
+// Rollback dilakukan dengan me-revert commit terakhir di GitOps repo,
+// sehingga ArgoCD otomatis sync ke state sebelumnya.
 //
 // Cara pakai:
-//   1. Buat Jenkins job baru (Pipeline)
-//   2. Arahkan ke file ini sebagai Jenkinsfile path
-//   3. Trigger manual saat butuh rollback
+//   1. Buat Jenkins job baru (Pipeline) — trigger manual
+//   2. Input: APP_NAME, ENVIRONMENT, jumlah commit yang di-revert
+//   3. Pipeline akan revert commit di gitops-config repo
+//   4. ArgoCD detect perubahan → auto-sync (DEV) / manual sync (PROD)
+//
+// Credentials:
+//   - git-credentials (Username/Password — Git PAT untuk GitOps repo)
 // ==============================================================================
 
 pipeline {
@@ -15,12 +20,17 @@ pipeline {
 
     parameters {
         string(name: 'APP_NAME', description: 'Nama aplikasi yang akan di-rollback')
-        string(name: 'ENVIRONMENT', defaultValue: 'prod', description: 'Environment target (dev/prod)')
-        string(name: 'REVISION', defaultValue: '', description: 'ArgoCD revision number (kosongkan untuk rollback ke revision sebelumnya)')
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'prod'], description: 'Environment target')
+        string(name: 'COMMITS_BACK', defaultValue: '1', description: 'Jumlah commit yang di-revert (default: 1 = rollback ke versi sebelumnya)')
     }
 
     environment {
-        ARGOCD_SERVER = credentials('argocd-url')
+        GITOPS_REPO = "git.company.internal/platform/gitops-config.git"
+    }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        disableConcurrentBuilds()
     }
 
     stages {
@@ -29,50 +39,56 @@ pipeline {
                 script {
                     def target = "${params.APP_NAME}-${params.ENVIRONMENT}"
                     input(
-                        message: "Confirm ROLLBACK ${target}?",
+                        message: "Confirm ROLLBACK ${target} by ${params.COMMITS_BACK} commit(s)?",
                         ok: 'Execute Rollback'
                     )
                 }
             }
         }
 
-        stage('Rollback') {
+        stage('Rollback via Git Revert') {
             steps {
                 script {
-                    def argoApp = "${params.APP_NAME}-${params.ENVIRONMENT}"
-                    
+                    echo "=== Rolling back ${params.APP_NAME}-${params.ENVIRONMENT} ==="
+
                     withCredentials([usernamePassword(
-                        credentialsId: 'argocd-credentials',
-                        usernameVariable: 'ARGOCD_USER',
-                        passwordVariable: 'ARGOCD_PASS'
+                        credentialsId: 'git-credentials',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_PASS'
                     )]) {
                         sh """
-                            # Login to ArgoCD
-                            argocd login ${ARGOCD_SERVER} \
-                                --username "\${ARGOCD_USER}" \
-                                --password "\${ARGOCD_PASS}" \
-                                --insecure
-                            
-                            echo "=== Current deployment history ==="
-                            argocd app history ${argoApp}
-                            
-                            # Execute rollback
-                            if [ -n "${params.REVISION}" ]; then
-                                echo "=== Rolling back to revision ${params.REVISION} ==="
-                                argocd app rollback ${argoApp} ${params.REVISION}
-                            else
-                                echo "=== Rolling back to previous revision ==="
-                                CURRENT=\$(argocd app history ${argoApp} | tail -1 | awk '{print \$1}')
-                                PREVIOUS=\$((CURRENT - 1))
-                                argocd app rollback ${argoApp} \${PREVIOUS}
-                            fi
-                            
-                            # Wait for healthy state
-                            argocd app wait ${argoApp} --timeout 300 --health
-                            
-                            echo "=== Rollback successful ==="
-                            argocd app get ${argoApp}
+                            rm -rf /tmp/gitops-rollback
+                            git clone https://\${GIT_USER}:\${GIT_PASS}@\${GITOPS_REPO} /tmp/gitops-rollback
+                            cd /tmp/gitops-rollback
+
+                            echo "=== Current state (last 5 commits) ==="
+                            git log --oneline -5 -- apps/${params.APP_NAME}-${params.ENVIRONMENT}/
+
+                            echo "=== Reverting last ${params.COMMITS_BACK} commit(s) ==="
+                            # Find commits that affected this app's values
+                            COMMITS_TO_REVERT=\$(git log --oneline -${params.COMMITS_BACK} --format="%H" -- apps/${params.APP_NAME}-${params.ENVIRONMENT}/values.yaml)
+
+                            for COMMIT in \$COMMITS_TO_REVERT; do
+                                git revert --no-commit \$COMMIT
+                            done
+
+                            git config user.email "jenkins@ci.local"
+                            git config user.name "Jenkins CI"
+                            git commit -m "rollback(${params.ENVIRONMENT}): revert ${params.APP_NAME} by ${params.COMMITS_BACK} version(s) [manual]"
+
+                            echo "=== New state ==="
+                            grep "tag:" apps/${params.APP_NAME}-${params.ENVIRONMENT}/values.yaml
+
+                            git push
+                            rm -rf /tmp/gitops-rollback
                         """
+                    }
+
+                    echo "=== GitOps rollback commit pushed ==="
+                    if (params.ENVIRONMENT == 'dev') {
+                        echo "ArgoCD will auto-sync DEV in ~3 minutes"
+                    } else {
+                        echo "PROD requires manual sync — go to ArgoCD UI to apply"
                     }
                 }
             }
@@ -81,29 +97,33 @@ pipeline {
         stage('Verify') {
             steps {
                 script {
+                    echo "=== Verifying rollback ==="
                     def domain = env.DOMAIN ?: 'company.internal'
-                    def subdomain = params.ENVIRONMENT == 'prod' ? params.APP_NAME : "${params.APP_NAME}-dev"
+                    def subdomain = params.ENVIRONMENT == 'prod' ? params.APP_NAME : "${params.APP_NAME}-${params.ENVIRONMENT}"
                     def healthUrl = "https://${subdomain}.${domain}/health"
-                    
-                    echo "Verifying: ${healthUrl}"
-                    
+
+                    echo "Waiting for deployment to stabilize..."
+                    sleep(60)
+
                     def healthy = false
                     for (int i = 1; i <= 10; i++) {
                         def status = sh(
                             script: "curl -s -o /dev/null -w '%{http_code}' --max-time 10 --insecure ${healthUrl}",
                             returnStdout: true
                         ).trim()
-                        
+
                         if (status == '200') {
-                            echo "Rollback verified - application healthy"
+                            echo "Rollback verified — application healthy (attempt ${i})"
                             healthy = true
                             break
                         }
-                        sleep(10)
+
+                        echo "Attempt ${i}/10 — HTTP ${status}, retrying..."
+                        sleep(15)
                     }
-                    
+
                     if (!healthy) {
-                        error "Post-rollback health check FAILED"
+                        error "Post-rollback health check FAILED — manual intervention required"
                     }
                 }
             }
@@ -112,10 +132,10 @@ pipeline {
 
     post {
         success {
-            sh "./cicd-template/scripts/notify.sh rollback ${params.ENVIRONMENT} 'Rollback ${params.APP_NAME} successful'"
+            echo "Rollback ${params.APP_NAME}-${params.ENVIRONMENT} SUCCESS"
         }
         failure {
-            sh "./cicd-template/scripts/notify.sh failure ${params.ENVIRONMENT} 'Rollback ${params.APP_NAME} FAILED'"
+            echo "Rollback ${params.APP_NAME}-${params.ENVIRONMENT} FAILED — check ArgoCD UI"
         }
     }
 }

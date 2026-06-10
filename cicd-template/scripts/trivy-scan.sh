@@ -2,9 +2,17 @@
 # ==============================================================================
 # Trivy Container Image Scan Script
 # ==============================================================================
-# Scans a Docker image for vulnerabilities using Trivy.
-# Fails pipeline if CRITICAL or HIGH vulnerabilities are found.
+# Standalone script untuk scan vulnerability pada container image.
+# Bisa digunakan untuk:
+#   - Local scan sebelum push ke registry
+#   - CI environment yang sudah install Trivy binary
+#   - Scheduled scan di production images
+#
+# Catatan: Jenkinsfile utama menjalankan Trivy via Docker container.
+#          Script ini untuk penggunaan langsung (Trivy terinstall lokal).
+#
 # Usage: ./trivy-scan.sh <image-name:tag> [severity] [exit-code]
+# Example: ./trivy-scan.sh myapp:latest CRITICAL,HIGH 1
 # ==============================================================================
 
 set -euo pipefail

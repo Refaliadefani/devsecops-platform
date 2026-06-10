@@ -2,8 +2,14 @@
 # ==============================================================================
 # Docker Build Helper Script
 # ==============================================================================
-# Builds a Docker image with standardized labels and build arguments.
+# Standalone script untuk build Docker image dengan standardized OCI labels.
+# Bisa digunakan untuk:
+#   - Local development build
+#   - CI/CD pipeline yang butuh Docker daemon (non-Kaniko)
+#   - Debugging build issues secara manual
+#
 # Usage: ./docker-build.sh <image-name> <image-tag> [dockerfile] [context]
+# Example: ./docker-build.sh harbor.company.internal/apps/myapp v1.0.0
 # ==============================================================================
 
 set -euo pipefail

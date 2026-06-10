@@ -2,9 +2,20 @@
 # ==============================================================================
 # Notification Helper Script
 # ==============================================================================
-# Sends deployment notifications to configured channels.
+# Standalone script untuk mengirim notifikasi deployment.
 # Supports: Slack webhook, Microsoft Teams, generic webhook.
+#
+# Bisa digunakan untuk:
+#   - Dipanggil dari CI/CD pipeline (pastikan script accessible)
+#   - Manual notification setelah maintenance
+#   - Integration dengan custom automation tools
+#
+# Environment variables yang dibutuhkan:
+#   - SLACK_WEBHOOK_URL (untuk Slack)
+#   - TEAMS_WEBHOOK_URL (untuk Microsoft Teams)
+#
 # Usage: ./notify.sh <status> <environment> [message]
+# Example: ./notify.sh success prod "Deployment v1.2.3 complete"
 # ==============================================================================
 
 set -euo pipefail

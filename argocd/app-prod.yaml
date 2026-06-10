@@ -2,8 +2,10 @@
 # ArgoCD Application - PROD Environment
 # ==============================================================================
 # Konfigurasi ArgoCD Application untuk deployment ke PROD namespace.
-# Auto-sync DISABLED: deployment ke PROD memerlukan manual approval.
-# Self-heal ENABLED: jika ada drift, ArgoCD akan mengembalikan ke desired state.
+# Auto-sync DISABLED: deployment ke PROD memerlukan explicit trigger.
+#
+# Flow: CI/CD pipeline commit image tag ke GitOps repo → ArgoCD detect OutOfSync
+#       → DevOps manually sync dari ArgoCD UI/CLI setelah approval di pipeline.
 # ==============================================================================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -14,7 +16,7 @@ metadata:
     app.kubernetes.io/part-of: my-application
     environment: production
   annotations:
-    # Notifikasi deployment
+    # Notifikasi via ArgoCD Notifications (opsional)
     notifications.argoproj.io/subscribe.on-sync-succeeded.slack: deployments
     notifications.argoproj.io/subscribe.on-sync-failed.slack: deployments-alerts
     notifications.argoproj.io/subscribe.on-health-degraded.slack: deployments-alerts
@@ -24,28 +26,21 @@ spec:
   project: applications
 
   source:
-    # Repository yang berisi Helm chart
-    repoURL: "https://git.company.internal/apps/my-application.git"
+    # GitOps repository — single source of truth untuk deployment state
+    repoURL: "https://git.company.internal/platform/gitops-config.git"
     targetRevision: main
-    path: helmchart
-
-    # Helm parameters
-    helm:
-      releaseName: my-application
-      valueFiles:
-        - values.yaml
-        - values-prod.yaml
-      parameters:
-        - name: image.tag
-          value: "stable"  # Will be overridden by CI/CD
+    path: apps/my-application-prod    # Chart + values dalam 1 directory
 
   destination:
     server: https://kubernetes.default.svc
     namespace: my-application-prod
 
   # Sync Policy - MANUAL for PROD
+  # Automated sync sengaja TIDAK diaktifkan untuk production.
+  # Self-heal membutuhkan automated sync — ini trade-off yang disengaja:
+  #   - Lebih aman: tidak ada perubahan tanpa explicit approval
+  #   - Rollback: gunakan Jenkinsfile.rollback (git revert → sync)
   syncPolicy:
-    # automated is NOT set - requires manual sync or CI/CD trigger
     syncOptions:
       - CreateNamespace=true
       - PrunePropagationPolicy=foreground
@@ -62,7 +57,7 @@ spec:
   # Revision history for rollback capability
   revisionHistoryLimit: 10
 
-  # Ignore HPA-managed replicas
+  # Ignore HPA-managed replica count
   ignoreDifferences:
     - group: apps
       kind: Deployment

@@ -16,9 +16,9 @@ spec:
   description: "Project untuk deployment aplikasi bisnis"
 
   # Source repositories yang diizinkan
+  # Hanya GitOps config repo yang boleh menjadi source deployment
   sourceRepos:
-    - "https://git.company.internal/apps/*"
-    - "https://git.company.internal/platform/devsecops-platform.git"
+    - "https://git.company.internal/platform/gitops-config.git"
 
   # Destination cluster dan namespace yang diizinkan
   destinations:
@@ -29,7 +29,8 @@ spec:
     - server: https://kubernetes.default.svc
       namespace: "*-prod"
 
-  # Resource whitelist - hanya resource ini yang boleh di-deploy
+  # Resource whitelist — hanya resource types ini yang boleh di-deploy
+  # Disesuaikan dengan template yang ada di Helm chart
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
@@ -56,10 +57,10 @@ spec:
     - group: external-secrets.io
       kind: ExternalSecret
 
-  # Roles untuk RBAC
+  # RBAC Roles
   roles:
     - name: developer
-      description: "Read-only access untuk developer"
+      description: "Developer: read all + sync DEV only"
       policies:
         - p, proj:applications:developer, applications, get, applications/*, allow
         - p, proj:applications:developer, applications, sync, applications/*-dev, allow
@@ -67,7 +68,7 @@ spec:
         - developers
 
     - name: devops
-      description: "Full access untuk DevOps team"
+      description: "DevOps: full access semua environment"
       policies:
         - p, proj:applications:devops, applications, *, applications/*, allow
       groups:
