@@ -411,7 +411,7 @@ Strategi konkret:
 3. **Automated alerts**: Tidak perlu monitoring manual 24/7. Tim hanya perlu respond saat alert datang
 4. **Runbooks**: Dokumentasi penanganan setiap alert — engineer baru pun bisa handle incident tanpa eskalasi ke senior
 5. **Reusable templates**: Helm chart dan CI pipeline standard mengurangi custom work
-6. **Progressive rollout**: Canary/rolling update mengurangi blast radius
+6. **Progressive rollout**: Rolling update dengan maxSurge/maxUnavailable mengurangi blast radius
 7. **Centralized observability**: Single pane of glass via Grafana
 
 ---
@@ -433,7 +433,7 @@ Prinsipnya: security bukan gate di akhir yang menghambat rilis, tapi bagian inte
 |-------|---------|------|
 | Pre-commit | Secret detection | GitLeaks (pre-commit hook) |
 | CI Pipeline | SAST | Semgrep |
-| CI Pipeline | Dependency check | Trivy (fs mode) |
+| CI Pipeline | Dependency check | Trivy (fs mode) — opsional, dijalankan terpisah |
 | CI Pipeline | Container scan | Trivy (image mode) |
 | Registry | Vulnerability scan | Harbor built-in (Trivy) |
 | Runtime | Pod security | Pod Security Standards (Restricted) |

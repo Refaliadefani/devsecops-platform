@@ -1,0 +1,28 @@
+# ==============================================================================
+# Pre-commit Hooks Configuration
+# ==============================================================================
+# Secret detection layer pertama: berjalan di local developer machine
+# sebelum code di-push ke repository.
+#
+# Install:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Manual run:
+#   pre-commit run --all-files
+# ==============================================================================
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.0
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-yaml
+      - id: check-json
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict

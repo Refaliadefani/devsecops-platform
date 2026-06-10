@@ -248,15 +248,6 @@ pipeline {
                             
                             docker push ${IMAGE_NAME}:${IMAGE_TAG}
                             
-                            # Tag branch-specific
-                            if [ "${env.BRANCH_NAME}" = "main" ]; then
-                                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:stable
-                                docker push ${IMAGE_NAME}:stable
-                            elif [ "${env.BRANCH_NAME}" = "develop" ]; then
-                                docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:develop
-                                docker push ${IMAGE_NAME}:develop
-                            fi
-                            
                             docker logout ${HARBOR_URL}
                         """
                     }
